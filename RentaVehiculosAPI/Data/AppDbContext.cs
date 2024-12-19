@@ -8,6 +8,7 @@
     {
         public DbSet<Vehiculo> Vehiculos { get; set; }
         public DbSet<Reserva> Reservas { get; set; }
+        public DbSet<AuditLog> AuditLogs { get; set; }
 
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
