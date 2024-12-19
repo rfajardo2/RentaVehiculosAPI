@@ -142,8 +142,6 @@ namespace RentaVehiculosAPI.Controllers
         }
 
 
-
-
         public class RoleAssignmentModel
         {
             public string Username { get; set; }
