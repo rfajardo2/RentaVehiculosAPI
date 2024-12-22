@@ -78,6 +78,18 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+// Habilitar CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", builder =>
+    {
+        builder.WithOrigins("http://127.0.0.1:5500") // Agrega la URL de tu frontend
+               .AllowAnyMethod()
+               .AllowAnyHeader();
+    });
+});
+
+
 // Agregar controladores y otros servicios
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -92,6 +104,10 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+
+// Usar CORS
+app.UseCors("AllowFrontend");
 
 app.UseHttpsRedirection();
 app.UseAuthentication();

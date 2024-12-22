@@ -301,7 +301,7 @@ namespace RentaVehiculosAPI.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ID"), 1L, 1);
 
-                    b.Property<int>("Año")
+                    b.Property<int>("Year")
                         .HasColumnType("int");
 
                     b.Property<string>("Estado")

@@ -54,38 +54,104 @@ namespace RentaVehiculosAPI.Controllers
         }
 
 
-
         [Authorize(Roles = "administrador")]
         [HttpGet("users")]
-        public IActionResult GetUsers()
+        public async Task<IActionResult> GetUsers()
         {
             var users = _userManager.Users.ToList();
-            return Ok(users.Select(u => new
+            var usersWithRoles = new List<object>();
+
+            foreach (var user in users)
             {
-                u.Id,
-                u.UserName,
-                u.Email
-            }));
+                var roles = await _userManager.GetRolesAsync(user);
+                usersWithRoles.Add(new
+                {
+                    user.Id,
+                    user.UserName,
+                    user.Email,
+                    Roles = roles // Esto devolverá una lista de roles asignados al usuario
+                });
+            }
+
+            return Ok(usersWithRoles);
+        }
+
+        [Authorize(Roles = "administrador")]
+        [HttpPost("update-password")]
+        public async Task<IActionResult> UpdatePassword([FromBody] UpdatePasswordRequest request)
+        {
+            var user = await _userManager.FindByIdAsync(request.UserId);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado" });
+            }
+
+            var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+            var result = await _userManager.ResetPasswordAsync(user, resetToken, request.NewPassword);
+
+            if (!result.Succeeded)
+            {
+                return BadRequest(result.Errors);
+            }
+
+            return Ok(new { message = "Contraseña actualizada exitosamente" });
         }
 
 
 
         [Authorize(Roles = "administrador")]
         [HttpPut("edit-user/{id}")]
-        public async Task<IActionResult> EditUser(string id, [FromBody] EditUserModel model)
+        public async Task<IActionResult> EditUser(string id, [FromBody] UpdateUserDto userDto)
         {
             var user = await _userManager.FindByIdAsync(id);
             if (user == null)
-                return NotFound("Usuario no encontrado.");
+                return NotFound(new { message = "Usuario no encontrado" });
 
-            user.UserName = model.Username;
-            user.Email = model.Email;
+            // Actualizar nombre de usuario y correo electrónico
+            user.UserName = userDto.Username;
+            user.Email = userDto.Email;
 
-            var result = await _userManager.UpdateAsync(user);
-            if (!result.Succeeded)
-                return BadRequest(result.Errors);
+            // Actualizar contraseña si se proporciona
+            if (!string.IsNullOrEmpty(userDto.Password))
+            {
+                var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+                var passwordResult = await _userManager.ResetPasswordAsync(user, token, userDto.Password);
 
-            return Ok("Usuario actualizado con éxito.");
+                if (!passwordResult.Succeeded)
+                {
+                    return BadRequest(new { message = "No se pudo actualizar la contraseña", errors = passwordResult.Errors });
+                }
+            }
+
+            // Actualizar rol si se proporciona
+            if (!string.IsNullOrEmpty(userDto.Role))
+            {
+                // Obtener los roles actuales del usuario
+                var currentRoles = await _userManager.GetRolesAsync(user);
+
+                // Remover todos los roles actuales
+                var removeRoleResult = await _userManager.RemoveFromRolesAsync(user, currentRoles);
+                if (!removeRoleResult.Succeeded)
+                {
+                    return BadRequest(new { message = "No se pudieron remover los roles actuales", errors = removeRoleResult.Errors });
+                }
+
+                // Asignar el nuevo rol
+                var addRoleResult = await _userManager.AddToRoleAsync(user, userDto.Role);
+                if (!addRoleResult.Succeeded)
+                {
+                    return BadRequest(new { message = "No se pudo asignar el nuevo rol", errors = addRoleResult.Errors });
+                }
+            }
+
+            // Actualizar otros datos del usuario en la base de datos
+            var updateResult = await _userManager.UpdateAsync(user);
+            if (!updateResult.Succeeded)
+            {
+                return BadRequest(new { message = "No se pudo actualizar el usuario", errors = updateResult.Errors });
+            }
+
+            return Ok(new { message = "Usuario actualizado correctamente" });
         }
 
 
@@ -157,8 +223,20 @@ namespace RentaVehiculosAPI.Controllers
 
 
         [Authorize]
+        [HttpGet("get-roles")]
+        public async Task<IActionResult> GetRoles()
+        {
+            var users = _roleManager.Roles.ToList();
+
+     
+
+            return Ok(users);
+        }
+
+
+        [Authorize]
         [HttpGet("get-roles/{username}")]
-        public async Task<IActionResult> GetRoles(string username)
+        public async Task<IActionResult> GetRolesUsser(string username)
         {
             var user = await _userManager.FindByNameAsync(username);
             if (user == null)
@@ -258,6 +336,20 @@ namespace RentaVehiculosAPI.Controllers
             public string Username { get; set; }
             public string Email { get; set; }
         }
+        public class UpdatePasswordRequest
+        {
+            public string UserId { get; set; }
+            public string NewPassword { get; set; }
+        }
+        public class UpdateUserDto
+        {
+            public string Username { get; set; } // Nombre de usuario
+            public string Email { get; set; }    // Correo electrónico
+            public string Role { get; set; }     // Rol del usuario
+            public string Password { get; set; } // Contraseña (opcional, solo si se quiere actualizar)
+        }
+
+
     }
 
     public class RegisterModel

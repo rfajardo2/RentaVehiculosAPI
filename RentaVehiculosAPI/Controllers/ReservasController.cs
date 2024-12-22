@@ -2,12 +2,13 @@
 {
     using Microsoft.AspNetCore.Authorization;
     using Microsoft.AspNetCore.Mvc;
+    using Microsoft.EntityFrameworkCore;
     using RentaVehiculosAPI.Data;
     using RentaVehiculosAPI.Models;
 
-    [Authorize]
-    [Route("api/[controller]")]
+    [Authorize] // Requiere autenticación para todas las acciones
     [ApiController]
+    [Route("api/[controller]")]
     public class ReservasController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -17,116 +18,156 @@
             _context = context;
         }
 
-
-        [Authorize]
-        [HttpGet("protected")]
-        public IActionResult ProtectedEndpoint()
-        {
-            return Ok("Este endpoint está protegido y solo accesible con un token válido.");
-        }
-
-        [Authorize(Roles = "Administrador")]
-        [HttpGet("admin-only")]
-        public IActionResult AdminOnlyEndpoint()
-        {
-            return Ok("Este endpoint es solo para administradores.");
-        }
-
+        // Obtener todas las reservas
         [HttpGet]
-        public IActionResult GetReservas()
+        public async Task<IActionResult> GetReservas()
         {
-            var reservas = _context.Reservas.ToList();
-            return Ok(reservas);
+            var reservas = await _context.Reservas
+                .Include(r => r.Cliente)
+                .Include(r => r.Vehiculo)
+                .ToListAsync();
+
+            return Ok(reservas.Select(r => new
+            {
+                r.Id,
+                Cliente = r.Cliente.Nombre,
+                Vehiculo = $"{r.Vehiculo.Marca} {r.Vehiculo.Modelo}",
+                r.FechaRecogida,
+                r.FechaDevolucion,
+                r.LugarRecogida,
+                r.LugarDevolucion,
+                r.CostoTotal,
+                r.Estado
+            }));
         }
 
+        // Obtener una reserva por ID
         [HttpGet("{id}")]
-        public IActionResult GetReserva(int id)
+        public async Task<IActionResult> GetReserva(int id)
         {
-            var reserva = _context.Reservas.Find(id);
-            if (reserva == null) return NotFound();
+            var reserva = await _context.Reservas
+                .Include(r => r.Cliente)
+                .Include(r => r.Vehiculo)
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (reserva == null)
+                return NotFound(new { message = "Reserva no encontrada" });
+
             return Ok(reserva);
         }
 
+        // Crear una nueva reserva
         [HttpPost]
-        public IActionResult CreateReserva([FromBody] Reserva reserva)
+        public async Task<IActionResult> CrearReserva([FromBody] Reserva reserva)
         {
-            // Validar si el vehículo existe
-            var vehiculo = _context.Vehiculos.Find(reserva.VehiculoID);
+            var vehiculo = await _context.Vehiculos.FindAsync(reserva.VehiculoId);
             if (vehiculo == null)
-                return BadRequest("El vehículo seleccionado no existe.");
+                return NotFound(new { message = "Vehículo no encontrado" });
 
-            // Buscar conflictos de fechas
-            var conflicto = _context.Reservas
-                .Where(r =>
-                    r.VehiculoID == reserva.VehiculoID &&
-                    r.Estado != "Cancelada" &&
-                    ((reserva.FechaInicio >= r.FechaInicio && reserva.FechaInicio < r.FechaFin) ||
-                     (reserva.FechaFin > r.FechaInicio && reserva.FechaFin <= r.FechaFin) ||
-                     (reserva.FechaInicio <= r.FechaInicio && reserva.FechaFin >= r.FechaFin)))
-                .Select(r => new { r.FechaInicio, r.FechaFin })
-                .FirstOrDefault();
+            if (vehiculo.Estado != "Disponible")
+                return BadRequest(new { message = "El vehículo no está disponible para reservar" });
 
-            if (conflicto != null)
-                return BadRequest($"El vehículo no está disponible en el rango de fechas especificado. Conflicto con una reserva existente desde {conflicto.FechaInicio:yyyy-MM-dd HH:mm} hasta {conflicto.FechaFin:yyyy-MM-dd HH:mm}.");
-
-            // Crear la reserva
+            reserva.Estado = "Activa";
             _context.Reservas.Add(reserva);
-            _context.SaveChanges();
 
-            return CreatedAtAction(nameof(GetReserva), new { id = reserva.ID }, reserva);
+            vehiculo.Estado = "Reservado"; // Cambiar el estado del vehículo
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Reserva creada exitosamente" });
         }
 
-
+        // Actualizar una reserva existente
         [HttpPut("{id}")]
-        public IActionResult UpdateReserva(int id, [FromBody] Reserva reserva)
+        public async Task<IActionResult> ActualizarReserva(int id, [FromBody] Reserva reserva)
         {
-            var existingReserva = _context.Reservas.Find(id);
-            if (existingReserva == null)
-                return NotFound();
+            var reservaExistente = await _context.Reservas.FindAsync(id);
+            if (reservaExistente == null)
+                return NotFound(new { message = "Reserva no encontrada" });
 
-            // Validar si el vehículo existe
-            var vehiculo = _context.Vehiculos.Find(reserva.VehiculoID);
-            if (vehiculo == null)
-                return BadRequest("El vehículo seleccionado no existe.");
+            reservaExistente.FechaRecogida = reserva.FechaRecogida;
+            reservaExistente.FechaDevolucion = reserva.FechaDevolucion;
+            reservaExistente.LugarRecogida = reserva.LugarRecogida;
+            reservaExistente.LugarDevolucion = reserva.LugarDevolucion;
+            reservaExistente.CostoTotal = reserva.CostoTotal;
 
-            // Buscar conflictos de fechas
-            var conflicto = _context.Reservas
-                .Where(r =>
-                    r.VehiculoID == reserva.VehiculoID &&
-                    r.ID != id &&
-                    r.Estado != "Cancelada" &&
-                    ((reserva.FechaInicio >= r.FechaInicio && reserva.FechaInicio < r.FechaFin) ||
-                     (reserva.FechaFin > r.FechaInicio && reserva.FechaFin <= r.FechaFin) ||
-                     (reserva.FechaInicio <= r.FechaInicio && reserva.FechaFin >= r.FechaFin)))
-                .Select(r => new { r.FechaInicio, r.FechaFin })
-                .FirstOrDefault();
-
-            if (conflicto != null)
-                return BadRequest($"El vehículo no está disponible en el rango de fechas especificado. Conflicto con una reserva existente desde {conflicto.FechaInicio:yyyy-MM-dd HH:mm} hasta {conflicto.FechaFin:yyyy-MM-dd HH:mm}.");
-
-            // Actualizar la reserva
-            existingReserva.VehiculoID = reserva.VehiculoID;
-            existingReserva.Cliente = reserva.Cliente;
-            existingReserva.FechaInicio = reserva.FechaInicio;
-            existingReserva.FechaFin = reserva.FechaFin;
-            existingReserva.CostoTotal = reserva.CostoTotal;
-            existingReserva.Estado = reserva.Estado;
-
-            _context.SaveChanges();
-            return NoContent();
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Reserva actualizada exitosamente" });
         }
 
-
-        [HttpDelete("{id}")]
-        public IActionResult DeleteReserva(int id)
+        // Cancelar una reserva
+        [HttpPut("cancelar/{id}")]
+        public async Task<IActionResult> CancelarReserva(int id)
         {
-            var reserva = _context.Reservas.Find(id);
-            if (reserva == null) return NotFound();
+            var reserva = await _context.Reservas.FindAsync(id);
+            if (reserva == null)
+                return NotFound(new { message = "Reserva no encontrada" });
+
+            if (reserva.Estado != "Activa")
+                return BadRequest(new { message = "Solo se pueden cancelar reservas activas" });
+
+            reserva.Estado = "Cancelada";
+
+            var vehiculo = await _context.Vehiculos.FindAsync(reserva.VehiculoId);
+            if (vehiculo != null)
+                vehiculo.Estado = "Disponible"; // Liberar el vehículo
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Reserva cancelada exitosamente" });
+        }
+
+        // Finalizar una reserva (Devolución de vehículo)
+        [HttpPut("finalizar/{id}")]
+        public async Task<IActionResult> FinalizarReserva(int id)
+        {
+            var reserva = await _context.Reservas.FindAsync(id);
+            if (reserva == null)
+                return NotFound(new { message = "Reserva no encontrada" });
+
+            if (reserva.Estado != "Activa")
+                return BadRequest(new { message = "Solo se pueden finalizar reservas activas" });
+
+            reserva.Estado = "Completada";
+
+            var vehiculo = await _context.Vehiculos.FindAsync(reserva.VehiculoId);
+            if (vehiculo != null)
+                vehiculo.Estado = "Disponible"; // Liberar el vehículo
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Reserva finalizada exitosamente" });
+        }
+
+        // Eliminar una reserva
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> EliminarReserva(int id)
+        {
+            var reserva = await _context.Reservas.FindAsync(id);
+            if (reserva == null)
+                return NotFound(new { message = "Reserva no encontrada" });
 
             _context.Reservas.Remove(reserva);
-            _context.SaveChanges();
-            return NoContent();
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Reserva eliminada exitosamente" });
         }
     }
+
+
+
+
+
+
+    public class CrearReservaDto
+    {
+        public int ClienteId { get; set; }
+        public int VehiculoId { get; set; }
+        public DateTime FechaRecogida { get; set; }
+        public DateTime FechaDevolucion { get; set; }
+        public string LugarRecogida { get; set; }
+        public string LugarDevolucion { get; set; }
+        public decimal CostoTotal { get; set; }
+    }
+    public class ActualizarReservaDto : CrearReservaDto
+    {
+    }
+
 
 }
